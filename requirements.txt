@@ -1,6 +1,7 @@
 streamlit
-chromadb
+chromadb==0.5.23
 sentence-transformers
 groq
 requests
 beautifulsoup4
+protobuf==3.20.3
