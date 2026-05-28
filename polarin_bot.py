@@ -7,9 +7,10 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+# ====================== CONFIG ======================
 st.set_page_config(page_title="POLARIN Assistant", page_icon="❄️", layout="wide")
 st.title("❄️ POLARIN Polar Data RAG Assistant")
-st.caption("Ask for Python code to access and plot polar data via ERDDAP")
+st.caption("Get ready-to-run Python code for polar data access & plotting")
 
 # ====================== SIDEBAR ======================
 with st.sidebar:
@@ -40,6 +41,7 @@ if "documents" not in st.session_state:
     st.session_state.documents = []
     st.session_state.metadatas = []
 
+# ====================== FUNCTIONS (Defined BEFORE use) ======================
 def scrape_polarin():
     urls = [
         "https://s4polarin.eu/",
@@ -60,7 +62,7 @@ def scrape_polarin():
                     st.session_state.documents.append(chunk)
                     st.session_state.metadatas.append({"source": url})
                     new_chunks += 1
-        except Exception as e:
+        except Exception:
             st.warning(f"Failed scraping {url}")
     
     rebuild_faiss_index()
@@ -75,7 +77,6 @@ def rebuild_faiss_index():
     index.add(embeddings)
     st.session_state.faiss_index = index
 
-# ====================== RAG ======================
 def get_context(question: str, k=5):
     if "faiss_index" not in st.session_state or len(st.session_state.documents) == 0:
         return "Please click 'Scrape POLARIN Site' first."
@@ -85,7 +86,6 @@ def get_context(question: str, k=5):
     context = "\n\n".join([st.session_state.documents[i] for i in indices[0]])
     return context
 
-# ====================== LLM ======================
 def generate_response(question: str, context: str):
     if not groq_api_key:
         return "Please enter your Groq API key in the sidebar."
@@ -121,11 +121,11 @@ if prompt := st.chat_input("E.g.: Show me Python code to plot sea ice concentrat
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
+        with st.spinner("Searching knowledge base..."):
             context = get_context(prompt)
             answer = generate_response(prompt, context)
             st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
 
-st.sidebar.caption("FAISS RAG Bot - Stable Version")
+st.sidebar.caption("FAISS RAG Bot")
