@@ -1,59 +1,57 @@
 """
 POLARIN ERDDAP Scientific Assistant
 ====================================
-Versione completa con analisi grafiche e report PDF
+English version - Optimized for Streamlit Cloud
 """
 
 import os
 import io
-import gc
 import warnings
 from datetime import datetime
 
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 import streamlit as st
-import cartopy.crs as ccrs
-import cartopy.feature as cfeature
 from groq import Groq
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle, PageBreak, HRFlowable
-from reportlab.lib.enums import TA_CENTER
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak, HRFlowable
 
 warnings.filterwarnings("ignore")
 
 # ====================== CONFIG ======================
 st.set_page_config(page_title="POLARIN Assistant", page_icon="❄️", layout="wide")
 st.title("❄️ POLARIN ERDDAP Scientific Assistant")
-st.caption("Analisi dataset oceanografici polari • s4polarin.eu")
+st.caption("Polar oceanographic data analysis • s4polarin.eu")
 
 ERDDAP_BASE = "https://erddap.s4polarin.eu/erddap"
 PDF_OUTPUT = "polarin_report.pdf"
 
 # ====================== GROQ CLIENT ======================
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))  # imposta la variabile d'ambiente o mettila qui
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ====================== ERDDAP FUNCTIONS ======================
 @st.cache_data(ttl=3600)
-def search_datasets(keyword: str = ""):
+def search_datasets(keyword: str = "polarin"):
+    """Search datasets on PolarIn ERDDAP server"""
     url = f"{ERDDAP_BASE}/search/index.csv?&searchFor={keyword}"
     try:
         df = pd.read_csv(url)
         df = df[df['Dataset ID'].notna() & (df['Dataset ID'] != 'Dataset ID')].reset_index(drop=True)
         return df[['Title', 'Dataset ID']]
     except:
+        st.error("Failed to connect to ERDDAP server")
         return pd.DataFrame()
 
 @st.cache_data
 def download_dataset(dataset_id: str):
+    """Download dataset from ERDDAP"""
     url = f"{ERDDAP_BASE}/tabledap/{dataset_id}.csv?&time>=1900-01-01"
-    st.info(f"📥 Scaricando {dataset_id}...")
+    st.info(f"📥 Downloading {dataset_id}...")
     resp = requests.get(url, timeout=120)
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
@@ -62,14 +60,15 @@ def download_dataset(dataset_id: str):
         df["time"] = pd.to_datetime(df["time"], errors="coerce")
     return df
 
-# ====================== PLOTTING ======================
-def elabora_visualizzazioni_dataset(df_data):
+# ====================== PLOTTING (No Cartopy) ======================
+def generate_plots(df_data):
+    """Generate analysis plots"""
     figures = []
     exclude = {"time", "latitude", "longitude", "depth", "station", "id", "platformcode"}
     params = [col for col in df_data.columns if col not in exclude and not col.endswith("_qc")]
     
     if not params:
-        st.warning("Nessun parametro numerico trovato.")
+        st.warning("No numeric parameters found in this dataset.")
         return figures
 
     df = df_data.copy()
@@ -77,7 +76,7 @@ def elabora_visualizzazioni_dataset(df_data):
         df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
     for param in params[:3]:
-        fig, axs = plt.subplots(2, 2, figsize=(14, 8))
+        fig, axs = plt.subplots(2, 2, figsize=(14, 9))
         fig.suptitle(f"{param.upper()} — {df.get('platformcode', pd.Series(['Dataset'])).iloc[0]}", 
                      fontsize=14, fontweight="bold")
 
@@ -87,17 +86,26 @@ def elabora_visualizzazioni_dataset(df_data):
         ax.set_title("Time Series")
         ax.grid(True, alpha=0.3)
 
-        # Daily / Monthly Average
+        # Daily Average
         ax = axs[0, 1]
         if "time" in df.columns:
             daily = df.set_index("time")[param].resample("D").mean()
             daily.plot(ax=ax)
             ax.set_title("Daily Average")
+            ax.grid(True, alpha=0.3)
 
         # Histogram
         ax = axs[1, 0]
-        ax.hist(df[param].dropna(), bins=30, alpha=0.7)
+        ax.hist(df[param].dropna(), bins=30, alpha=0.7, color="teal")
         ax.set_title("Distribution")
+
+        # Monthly Boxplot
+        ax = axs[1, 1]
+        if "time" in df.columns:
+            df["month"] = df["time"].dt.month
+            df.boxplot(column=param, by="month", ax=ax)
+            ax.set_title("Monthly Boxplot")
+            ax.set_xlabel("Month")
 
         plt.tight_layout()
         figures.append((fig, param, "Platform"))
@@ -107,105 +115,71 @@ def elabora_visualizzazioni_dataset(df_data):
     return figures
 
 # ====================== PDF REPORT ======================
-def _fig_to_rl_image(fig, width_cm=16):
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-    buf.seek(0)
-    return RLImage(buf, width=width_cm*cm)
-
-def genera_report_pdf(record_list):
-    doc = SimpleDocTemplate(PDF_OUTPUT, pagesize=A4, leftMargin=1.5*cm, rightMargin=1.5*cm,
-                            topMargin=2*cm, bottomMargin=2*cm)
+def generate_pdf_report(record_list):
+    """Generate PDF report"""
+    doc = SimpleDocTemplate(PDF_OUTPUT, pagesize=A4)
     styles = getSampleStyleSheet()
-    
     story = []
+
     story.append(Paragraph("POLARIN Dataset Analysis Report", styles["Title"]))
     story.append(Spacer(1, 20))
-    story.append(Paragraph(f"Generato il {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["Normal"]))
-    story.append(HRFlowable(width="100%", thickness=2))
-    story.append(Spacer(1, 30))
 
     for rec in record_list:
         story.append(Paragraph(f"Dataset: {rec['dataset_id']}", styles["Heading1"]))
-        story.append(Paragraph(rec.get('title', ''), styles["Normal"]))
-        story.append(Spacer(1, 10))
-        
         for fig, param, _ in rec.get("figures", []):
-            story.append(Paragraph(f"Parametro: {param.upper()}", styles["Heading2"]))
-            story.append(_fig_to_rl_image(fig))
+            story.append(Paragraph(f"Parameter: {param.upper()}", styles["Heading2"]))
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            buf.seek(0)
+            story.append(RLImage(buf, width=16*cm))
             story.append(Spacer(1, 15))
-
         story.append(PageBreak())
 
     doc.build(story)
     return PDF_OUTPUT
 
-# ====================== LLM HELPER ======================
-def genera_domande_scientifiche():
-    prompt = """Sei un ricercatore polare esperto del progetto POLARIN.
-    Genera 6 domande scientifiche interessanti, indagabili con dataset ERDDAP di s4polarin.eu.
-    Focalizzati su: temperatura, salinità, ghiaccio marino, profili CTD, trend climatici, interazioni oceano-cryosfera."""
-    
-    response = client.chat.completions.create(
-        model="llama3-70b-8192",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=800
-    )
-    return response.choices[0].message.content
-
-# ====================== STREAMLIT UI ======================
-tab1, tab2, tab3 = st.tabs(["🔍 Esplora Dataset", "📊 Analisi", "🤖 Assistente AI"])
+# ====================== MAIN INTERFACE ======================
+tab1, tab2, tab3 = st.tabs(["🔍 Dataset Explorer", "📊 Analysis", "🤖 AI Assistant"])
 
 with tab1:
-    col1, col2 = st.columns([3,1])
-    with col1:
-        keyword = st.text_input("Cerca dataset", value="polarin")
-    if st.button("Cerca"):
-        df = search_datasets(keyword)
+    st.subheader("Search PolarIn Datasets")
+    if st.button("Search All Datasets"):
+        df = search_datasets("")
         if not df.empty:
             st.dataframe(df, use_container_width=True)
             st.session_state.datasets = df
-        else:
-            st.warning("Nessun dataset trovato.")
 
 with tab2:
-    dataset_id = st.text_input("Dataset ID da analizzare", placeholder="es. POLARIN_SOME_DATASET")
-    if st.button("Analizza e genera grafici"):
+    st.subheader("Dataset Analysis")
+    dataset_id = st.text_input("Enter Dataset ID", placeholder="e.g. ASPIM_PR_CNDC_Portofino")
+    
+    if st.button("Analyze Dataset"):
         if dataset_id:
             try:
                 df = download_dataset(dataset_id)
-                st.success(f"Caricate {len(df)} righe")
+                st.success(f"✅ Loaded {len(df):,} records")
                 
-                figures = elabora_visualizzazioni_dataset(df)
+                figures = generate_plots(df)
                 
-                record = {
-                    "dataset_id": dataset_id,
-                    "title": dataset_id,
-                    "figures": figures,
-                    "n_records": len(df)
-                }
-                
-                if st.button("📄 Genera Report PDF"):
-                    pdf_path = genera_report_pdf([record])
+                if st.button("📄 Generate PDF Report"):
+                    record = {"dataset_id": dataset_id, "figures": figures}
+                    pdf_path = generate_pdf_report([record])
                     with open(pdf_path, "rb") as f:
-                        st.download_button("Scarica Report PDF", f, file_name=pdf_path)
+                        st.download_button("Download PDF Report", f, file_name=pdf_path)
             except Exception as e:
-                st.error(f"Errore: {e}")
+                st.error(f"Error: {e}")
         else:
-            st.warning("Inserisci un Dataset ID")
+            st.warning("Please enter a Dataset ID")
 
 with tab3:
-    st.subheader("Assistente Scientifico")
-    if st.button("💡 Genera domande di ricerca PolarIn"):
-        with st.spinner("Pensando..."):
-            domande = genera_domande_scientifiche()
-            st.markdown(domande)
-    
-    query = st.text_area("Fai una domanda scientifica", 
-        "Quali trend di temperatura si osservano nel Mare di Ross?")
-    
-    if st.button("Invia domanda"):
-        st.info("L'LLM analizzerà la domanda e suggerirà dataset (funzionalità in espansione).")
+    st.subheader("AI Scientific Assistant")
+    if st.button("Generate Scientific Questions"):
+        with st.spinner("Thinking..."):
+            prompt = "Generate 6 interesting scientific questions about polar regions using ERDDAP oceanographic datasets."
+            response = client.chat.completions.create(
+                model="llama3-70b-8192",
+                messages=[{"role": "user", "content": prompt}]
+            )
+            st.markdown(response.choices[0].message.content)
 
-st.caption("POLARIN ERDDAP Assistant • Basato su ASPIM_analysis.ipynb")
+st.caption("POLARIN ERDDAP Assistant | Optimized for Streamlit Cloud")
