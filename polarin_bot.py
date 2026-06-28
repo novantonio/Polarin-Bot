@@ -1,7 +1,7 @@
 """
 POLARIN ERDDAP Scientific Assistant
 ====================================
-English version - Optimized for Streamlit Cloud
+Complete English version - Optimized for Streamlit Cloud
 """
 
 import os
@@ -17,9 +17,8 @@ from groq import Groq
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
-from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, PageBreak
 
 warnings.filterwarnings("ignore")
 
@@ -35,32 +34,42 @@ PDF_OUTPUT = "polarin_report.pdf"
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 # ====================== ERDDAP FUNCTIONS ======================
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def search_datasets(keyword: str = "polarin"):
-    """Search datasets on PolarIn ERDDAP server"""
+    """Search datasets on PolarIn ERDDAP"""
     url = f"{ERDDAP_BASE}/search/index.csv?&searchFor={keyword}"
     try:
-        df = pd.read_csv(url)
+        response = requests.get(url, timeout=25)
+        response.raise_for_status()
+        df = pd.read_csv(io.StringIO(response.text))
         df = df[df['Dataset ID'].notna() & (df['Dataset ID'] != 'Dataset ID')].reset_index(drop=True)
         return df[['Title', 'Dataset ID']]
-    except:
-        st.error("Failed to connect to ERDDAP server")
-        return pd.DataFrame()
+    except requests.exceptions.Timeout:
+        st.error("⏳ Timeout connecting to ERDDAP server.")
+    except requests.exceptions.ConnectionError:
+        st.error("🌐 Cannot connect to ERDDAP server. Please try again later.")
+    except Exception as e:
+        st.error(f"Connection error: {str(e)[:80]}...")
+    return pd.DataFrame()
 
 @st.cache_data
 def download_dataset(dataset_id: str):
     """Download dataset from ERDDAP"""
     url = f"{ERDDAP_BASE}/tabledap/{dataset_id}.csv?&time>=1900-01-01"
     st.info(f"📥 Downloading {dataset_id}...")
-    resp = requests.get(url, timeout=120)
-    resp.raise_for_status()
-    df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
-    df.columns = [c.lower() for c in df.columns]
-    if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    return df
+    try:
+        resp = requests.get(url, timeout=90)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
+        df.columns = [c.lower() for c in df.columns]
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        return df
+    except Exception as e:
+        st.error(f"Download failed: {e}")
+        return pd.DataFrame()
 
-# ====================== PLOTTING (No Cartopy) ======================
+# ====================== PLOTTING ======================
 def generate_plots(df_data):
     """Generate analysis plots"""
     figures = []
@@ -138,27 +147,28 @@ def generate_pdf_report(record_list):
     doc.build(story)
     return PDF_OUTPUT
 
-# ====================== MAIN INTERFACE ======================
+# ====================== MAIN UI ======================
 tab1, tab2, tab3 = st.tabs(["🔍 Dataset Explorer", "📊 Analysis", "🤖 AI Assistant"])
 
 with tab1:
     st.subheader("Search PolarIn Datasets")
-    if st.button("Search All Datasets"):
-        df = search_datasets("")
+    keyword = st.text_input("Search keyword", value="polarin")
+    if st.button("Search Datasets"):
+        df = search_datasets(keyword)
         if not df.empty:
+            st.success(f"Found {len(df)} datasets")
             st.dataframe(df, use_container_width=True)
             st.session_state.datasets = df
 
 with tab2:
-    st.subheader("Dataset Analysis")
+    st.subheader("Analyze Dataset")
     dataset_id = st.text_input("Enter Dataset ID", placeholder="e.g. ASPIM_PR_CNDC_Portofino")
     
     if st.button("Analyze Dataset"):
         if dataset_id:
-            try:
-                df = download_dataset(dataset_id)
+            df = download_dataset(dataset_id)
+            if not df.empty:
                 st.success(f"✅ Loaded {len(df):,} records")
-                
                 figures = generate_plots(df)
                 
                 if st.button("📄 Generate PDF Report"):
@@ -166,20 +176,19 @@ with tab2:
                     pdf_path = generate_pdf_report([record])
                     with open(pdf_path, "rb") as f:
                         st.download_button("Download PDF Report", f, file_name=pdf_path)
-            except Exception as e:
-                st.error(f"Error: {e}")
         else:
             st.warning("Please enter a Dataset ID")
 
 with tab3:
     st.subheader("AI Scientific Assistant")
-    if st.button("Generate Scientific Questions"):
-        with st.spinner("Thinking..."):
-            prompt = "Generate 6 interesting scientific questions about polar regions using ERDDAP oceanographic datasets."
+    if st.button("Generate Scientific Research Questions"):
+        with st.spinner("Generating questions..."):
+            prompt = "Generate 6 interesting scientific questions about polar oceanography using ERDDAP datasets."
             response = client.chat.completions.create(
                 model="llama3-70b-8192",
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
             )
             st.markdown(response.choices[0].message.content)
 
-st.caption("POLARIN ERDDAP Assistant | Optimized for Streamlit Cloud")
+st.caption("POLARIN ERDDAP Assistant | Built for Streamlit Cloud")
