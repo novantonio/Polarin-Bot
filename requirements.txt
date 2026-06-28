@@ -5,3 +5,6 @@ groq
 requests
 beautifulsoup4
 numpy
+matplotlib
+cartopy 
+reportlab
