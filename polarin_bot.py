@@ -73,42 +73,31 @@ def elabora_visualizzazioni_dataset(df_data):
         return figures
 
     df = df_data.copy()
-    has_depth = "depth" in df.columns and df["depth"].nunique() > 1
-    if not has_depth:
-        df["depth"] = 1.0
+    if "time" in df.columns:
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
 
-    df["time"] = pd.to_datetime(df["time"], errors="coerce")
-    df["month"] = df["time"].dt.month
-
-    has_coords = all(c in df.columns for c in ["latitude", "longitude"])
-
-    for param in params[:3]:   # limite per performance
-        fig, axs = plt.subplots(2, 3, figsize=(18, 9), gridspec_kw={"hspace": 0.4, "wspace": 0.3})
+    for param in params[:3]:
+        fig, axs = plt.subplots(2, 2, figsize=(14, 8))
         fig.suptitle(f"{param.upper()} — {df.get('platformcode', pd.Series(['Dataset'])).iloc[0]}", 
                      fontsize=14, fontweight="bold")
 
-        # 1. Mappa
-        if has_coords:
-            ax = plt.subplot(2, 3, 1, projection=ccrs.PlateCarree())
-            coords = df[["latitude", "longitude"]].dropna()
-            ax.scatter(coords["longitude"], coords["latitude"], s=8, color="red", alpha=0.6, transform=ccrs.PlateCarree())
-            ax.add_feature(cfeature.COASTLINE)
-            ax.add_feature(cfeature.LAND, facecolor="#eeeeee")
-            ax.set_title("Posizione")
+        # Time Series
+        ax = axs[0, 0]
+        ax.scatter(df["time"], df[param], s=8, alpha=0.7)
+        ax.set_title("Time Series")
+        ax.grid(True, alpha=0.3)
 
-        # 2. Time series
+        # Daily / Monthly Average
         ax = axs[0, 1]
-        ax.scatter(df["time"], df[param], s=6, alpha=0.7)
-        ax.set_title("Serie Temporale")
-        ax.grid(True, alpha=0.3)
+        if "time" in df.columns:
+            daily = df.set_index("time")[param].resample("D").mean()
+            daily.plot(ax=ax)
+            ax.set_title("Daily Average")
 
-        # 3. Media mensile
-        ax = axs[1, 1]
-        monthly = df.groupby("month")[param].mean()
-        ax.plot(monthly.index, monthly.values, marker='o')
-        ax.set_title("Media Mensile")
-        ax.set_xticks(range(1,13))
-        ax.grid(True, alpha=0.3)
+        # Histogram
+        ax = axs[1, 0]
+        ax.hist(df[param].dropna(), bins=30, alpha=0.7)
+        ax.set_title("Distribution")
 
         plt.tight_layout()
         figures.append((fig, param, "Platform"))
