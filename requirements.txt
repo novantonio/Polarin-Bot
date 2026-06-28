@@ -1,10 +1,9 @@
 streamlit
-sentence-transformers
-faiss-cpu
-groq
-requests
-beautifulsoup4
+pandas
 numpy
+requests
 matplotlib
-cartopy 
 reportlab
+beautifulsoup4
+groq
+python-dotenv
